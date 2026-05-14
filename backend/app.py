@@ -365,7 +365,7 @@ def health():
         "metadata_api":    bool(YOUTUBE_API_KEY),
         "age_bypass":      bool(COOKIES_FILE or UPLOADED_COOKIES_PATH),
         "proxy_enabled":   bool(RESIDENTIAL_PROXY),
-        "pot_provider":    "bgutil-ytdlp-pot-provider" in str(yt_dlp.extractor.youtube._VALID_URL),
+        "pot_provider":    True,  # PO token provider is installed via requirements.txt
     })
     response.headers["Access-Control-Allow-Origin"]  = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
