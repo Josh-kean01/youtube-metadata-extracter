@@ -1,0 +1,48 @@
+# Root git ignore for TubeInspect monorepo
+
+# Node dependencies
+frontend/node_modules/
+
+# Local environment files
+.env
+.env.local
+.env.*.local
+
+# Vite build output
+dist/
+build/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE/editor folders
+.vscode/
+.idea/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.log
+
+# Python files
+backend/__pycache__/
+backend/*.py[cod]
+backend/*.pyo
+backend/*.pyd
+backend/venv/
+backend/.venv/
+backend/env/
+backend/.env
+
+# Ignore stray root package files if they remain outside frontend
+/package-lock.json
+/package.json
+
+# Keep frontend package manifest locked
+!frontend/package-lock.json
+!frontend/package.json
+
+# Frontend build output
+/frontend/dist/

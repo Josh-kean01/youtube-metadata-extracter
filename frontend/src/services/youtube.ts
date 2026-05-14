@@ -1,5 +1,43 @@
 // YouTube Video Metadata Extraction Service
 import { scrapeYouTubeMetadata } from "./scraper";
+import { getApiBase } from "./downloader";
+
+/**
+ * Tries the backend metadata proxy first (uses server-side YouTube API key).
+ * Falls back to user's own client-side key, then HTML scraping, then oEmbed.
+ */
+async function fetchFromBackend(videoId: string): Promise<VideoMetadata | null> {
+  const base = getApiBase();
+  if (!base) return null;
+
+  try {
+    const res = await fetch(`${base}/api/metadata?id=${encodeURIComponent(videoId)}`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.ok) return null;
+
+    return {
+      id:           data.id,
+      title:        data.title,
+      description:  data.description,
+      publishedAt:  data.publishedAt,
+      channelId:    data.channelId,
+      channelTitle: data.channelTitle,
+      category:     data.category,
+      tags:         data.tags || [],
+      viewCount:    data.viewCount,
+      likeCount:    data.likeCount,
+      commentCount: data.commentCount,
+      thumbnails:   data.thumbnails,
+      embedUrl:     data.embedUrl,
+      isMockData:   false,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export interface VideoMetadata {
   id: string;
@@ -272,49 +310,61 @@ export async function fetchYouTubeApiData(videoId: string, apiKey: string): Prom
 }
 
 /**
- * Main function to retrieve video data
+ * Main function to retrieve video data.
+ *
+ * Priority chain (best → fallback):
+ *   1. Server-side YouTube Data API (via our backend proxy — preferred, key hidden)
+ *   2. User's own client-side API key (if provided)
+ *   3. HTML scraping via AllOrigins proxy
+ *   4. oEmbed (title + channel only)
  */
 export async function getVideoData(videoId: string, apiKey?: string): Promise<VideoMetadata> {
-  // Check if it matches mock data
+  // 0. Demo mock data (only when no API key is being used)
   if (!apiKey && MOCK_VIDEOS[videoId]) {
     return MOCK_VIDEOS[videoId];
   }
 
+  // 1. Try our backend proxy first — it has the YouTube API key on the server
+  const fromBackend = await fetchFromBackend(videoId);
+  if (fromBackend) return fromBackend;
+
+  // 2. User-provided client-side API key
   if (apiKey) {
-    return fetchYouTubeApiData(videoId, apiKey);
-  } else {
     try {
-      // Use advanced scraper
-      const scraped = await scrapeYouTubeMetadata(videoId);
-      return {
-        ...scraped,
-        channelId: "",
-        isMockData: false
-      };
+      return await fetchYouTubeApiData(videoId, apiKey);
     } catch (e) {
-      console.warn("Direct scraping failed, falling back to oEmbed:", e);
-      // Fallback to oEmbed for basic details
-      const oEmbed = await fetchOEmbedData(videoId);
-      return {
-        id: videoId,
-        title: oEmbed.title || "",
-        description: "Scraping failed. Insert an API Key above for reliable fetching.",
-        publishedAt: new Date().toISOString(),
-        channelId: "",
-        channelTitle: oEmbed.channelTitle || "",
-        category: "Unknown",
-        tags: [],
-        viewCount: "N/A",
-        likeCount: "N/A",
-        commentCount: "N/A",
-        thumbnails: oEmbed.thumbnails || {
-          default: `https://img.youtube.com/vi/${videoId}/default.jpg`,
-          medium: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
-          high: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-        },
-        embedUrl: oEmbed.embedUrl || `https://www.youtube.com/embed/${videoId}`,
-        isMockData: true
-      };
+      console.warn("User API key failed, falling back to scraper:", e);
     }
   }
+
+  // 3. HTML scraping via AllOrigins
+  try {
+    const scraped = await scrapeYouTubeMetadata(videoId);
+    return { ...scraped, channelId: "", isMockData: false };
+  } catch (e) {
+    console.warn("Scraping failed, falling back to oEmbed:", e);
+  }
+
+  // 4. oEmbed — last resort, title and channel only
+  const oEmbed = await fetchOEmbedData(videoId);
+  return {
+    id: videoId,
+    title: oEmbed.title || "",
+    description: "Could not retrieve full metadata. Try again or check the link.",
+    publishedAt: new Date().toISOString(),
+    channelId: "",
+    channelTitle: oEmbed.channelTitle || "",
+    category: "Unknown",
+    tags: [],
+    viewCount: "N/A",
+    likeCount: "N/A",
+    commentCount: "N/A",
+    thumbnails: oEmbed.thumbnails || {
+      default: `https://img.youtube.com/vi/${videoId}/default.jpg`,
+      medium:  `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
+      high:    `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+    },
+    embedUrl: oEmbed.embedUrl || `https://www.youtube.com/embed/${videoId}`,
+    isMockData: true,
+  };
 }

@@ -114,9 +114,67 @@ export async function fetchFormats(videoId: string): Promise<VideoInfo> {
   }
 
   if (!data.ok) {
-    throw new Error(data.error || "Failed to fetch formats.");
+    const err = data.error || "Failed to fetch formats.";
+    const code = data.code || "";
+
+    // Map server error codes to user-friendly messages
+    if (code === "AGE_RESTRICTED") {
+      throw new Error("AGE_RESTRICTED:" + (data.help || "This video is age-restricted. Upload YouTube cookies in the Configure panel."));
+    }
+    if (code === "REGION_LOCKED") {
+      throw new Error("REGION_LOCKED:" + err);
+    }
+    if (code === "PRIVATE" || code === "NOT_FOUND") {
+      throw new Error(err);
+    }
+    throw new Error(err);
   }
   return data as VideoInfo;
+}
+
+
+/* ─── Upload cookies for age-restricted videos ──────────── */
+export async function uploadCookies(cookiesText: string): Promise<{ ok: boolean; message?: string; error?: string }> {
+  const base = getApiBase();
+  if (!base) throw new Error("No backend configured.");
+
+  const formData = new FormData();
+  const blob = new Blob([cookiesText], { type: "text/plain" });
+  formData.append("file", blob, "cookies.txt");
+
+  const res = await fetch(`${base}/api/cookies`, {
+    method: "POST",
+    body: formData,
+    signal: AbortSignal.timeout(30000),
+  });
+
+  return await res.json();
+}
+
+
+/* ─── Get backend feature flags ─────────────────────────── */
+export async function getBackendFeatures(): Promise<{
+  metadata_api: boolean;
+  age_bypass: boolean;
+  proxy_enabled: boolean;
+  pot_provider: boolean;
+} | null> {
+  const base = getApiBase();
+  if (!base) return null;
+
+  try {
+    const res = await fetch(`${base}/`, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      metadata_api:  !!data.metadata_api,
+      age_bypass:    !!data.age_bypass,
+      proxy_enabled: !!data.proxy_enabled,
+      pot_provider:  !!data.pot_provider,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /* ─── Stream URL builder ────────────────────────────────── */
