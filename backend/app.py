@@ -77,40 +77,10 @@ YOUTUBE_CATEGORIES = {
     "43": "Shows", "44": "Trailers",
 }
 
-# ─── 2026 Client Strategies (ranked by success rate) ───────
-# Each strategy is tried in order until one returns playable formats.
-# Based on yt-dlp community findings for 2026 YouTube changes.
-CLIENT_STRATEGIES = [
-    # Strategy A: Default with PO token support, skip problematic clients
-    # This is yt-dlp's own recommended 2026 approach
-    "default,-tv,-android_sdkless,web_safari,web_embedded",
-    
-    # Strategy B: TV embedded - best for age-restricted without cookies
-    # Doesn't require PO token, works for most age-gated content
-    "tv_embedded,default,-tv",
-    
-    # Strategy C: Android VR + embedded (no PO token needed)
-    "android_vr,web_embedded,default,-tv",
-    
-    # Strategy D: Web Safari only (provides HLS formats that skip GVS)
-    "web_safari,default,-tv",
-    
-    # Strategy E: iOS (sometimes works when others fail)
-    "ios,default,-tv",
-    
-    # Strategy F: Pure default (last resort)
-    "default",
-]
-
-
-def build_ydl_opts(client_str: str, fmt: str | None = None, cookies_path: str | None = None) -> dict:
+# ─── Simple yt-dlp configuration ──────────────────────────
+def build_simple_ydl_opts(cookies_path: str | None = None) -> dict:
     """
-    Build yt-dlp options with 2026 best practices:
-    - PO token provider plugin
-    - curl-cffi for TLS impersonation
-    - Multiple client fallback
-    - Optional cookies for age-restricted
-    - Optional residential proxy
+    Simple yt-dlp options like the working app - no complex client strategies.
     """
     opts = {
         "quiet": True,
@@ -124,28 +94,10 @@ def build_ydl_opts(client_str: str, fmt: str | None = None, cookies_path: str | 
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
         },
-        "extractor_args": {
-            "youtube": {
-                "player_client": client_str.split(","),
-                # Skip webpage download to reduce bot detection
-                "player_skip": ["webpage", "configs"],
-                # Skip manifests that cause issues on serverless
-                "skip_manifests": ["dash", "hls"] if not fmt or "hls" not in fmt else [],
-                # Enable PO token handling via plugin
-                "po_token": "web+gvs",
-            }
-        },
-        # curl-cffi for Chrome 124 TLS impersonation
-        "curl_cffi_impersonate": "chrome124",
     }
     
-    if fmt:
-        opts["format"] = fmt
-    
-    # Cookies for age-restricted videos
+    # Cookies for age-restricted videos (if uploaded)
     if cookies_path:
         opts["cookies"] = cookies_path
     elif COOKIES_FILE:
@@ -194,120 +146,89 @@ def is_region_locked(err: str) -> bool:
     )
 
 
-# ─── Format extraction ─────────────────────────────────────
+# ─── Simple format extraction ─────────────────────────────
 def extract_formats(video_id: str) -> dict:
     """
-    Extract available formats using multi-client fallback.
-    Returns enriched format list or raises exception with specific error code.
+    Extract available formats using simple yt-dlp approach like the working app.
+    No complex client strategies - just run yt-dlp once and let it handle it.
     """
     url = f"https://www.youtube.com/watch?v={video_id}"
-    last_error = "Unknown"
-    attempted = []
-    age_restricted_count = 0  # Count how many strategies failed with age errors
-
-    for i, client_str in enumerate(CLIENT_STRATEGIES):
-        attempted.append(client_str)
+    
+    try:
+        # Simple yt-dlp options like the working app
+        opts = build_simple_ydl_opts(cookies_path=UPLOADED_COOKIES_PATH)
         
-        # Small delay between attempts to avoid rate limiting
-        if i > 0:
-            time.sleep(0.5 * (i + 1))
-        
-        try:
-            opts = build_ydl_opts(client_str, cookies_path=UPLOADED_COOKIES_PATH)
-            
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
 
-            title     = info.get("title", f"video-{video_id}")
-            duration  = info.get("duration", 0) or 0
-            thumbnail = info.get("thumbnail", "")
-            uploader  = info.get("uploader") or info.get("channel", "Unknown")
-            raw       = info.get("formats", [])
+        title     = info.get("title", f"video-{video_id}")
+        duration  = info.get("duration", 0) or 0
+        thumbnail = info.get("thumbnail", "")
+        uploader  = info.get("uploader") or info.get("channel", "Unknown")
+        raw       = info.get("formats", [])
 
-            # Build video format list — one per unique height
-            seen, videos = set(), []
-            for f in sorted(raw, key=lambda x: x.get("height") or 0, reverse=True):
-                h = f.get("height")
-                if not h or f.get("vcodec", "none") == "none":
-                    continue
-                if h in seen:
-                    continue
-                seen.add(h)
-                hs = str(h)
-                videos.append({
-                    "format_id":    f["format_id"],
-                    "height":       h,
-                    "label":        {"4320": "8K Ultra HD", "2160": "4K Ultra HD", "1440": "2K QHD", "1080": "Full HD", "720": "HD"}.get(hs, f"{hs}p"),
-                    "resolution":   f"{hs}p",
-                    "ext":          f.get("ext", "mp4"),
-                    "vcodec":       (f.get("vcodec") or "mp4").split(".")[0],
-                    "acodec":       f.get("acodec", "none"),
-                    "filesize":     f.get("filesize") or f.get("filesize_approx"),
-                    "fps":          f.get("fps"),
-                    "ytdlp_format": f"bv[height={h}]+ba/bv[height<={h}]+ba/best",
-                    "client":       client_str,
-                })
-
-            # Success: got video formats
-            if videos:
-                audios = [
-                    {"label": "MP3",  "sub": "Best quality",  "ext": "mp3",  "ytdlp_format": "bestaudio/best",                     "mode": "audio", "client": client_str},
-                    {"label": "Opus", "sub": "Smaller file",  "ext": "opus", "ytdlp_format": "bestaudio[ext=webm]/bestaudio/best",  "mode": "audio", "client": client_str},
-                    {"label": "M4A",  "sub": "AAC audio",     "ext": "m4a",  "ytdlp_format": "bestaudio[ext=m4a]/bestaudio/best",   "mode": "audio", "client": client_str},
-                    {"label": "WAV",  "sub": "Lossless",      "ext": "wav",  "ytdlp_format": "bestaudio/best",                     "mode": "audio", "client": client_str},
-                ]
-                return {
-                    "ok":          True,
-                    "id":          video_id,
-                    "title":       title,
-                    "duration":    duration,
-                    "thumbnail":   thumbnail,
-                    "uploader":    uploader,
-                    "video":       videos[:8],
-                    "audio":       audios,
-                    "client_used": client_str,
-                    "strategies_tried": len(attempted),
-                }
-
-            # No videos but no error — try next client
-            last_error = f"Client '{client_str}' returned no video formats."
-            continue
-
-        except yt_dlp.utils.DownloadError as e:
-            last_error = str(e)
-            print(f"DEBUG: yt-dlp error with client '{client_str}': {last_error}")  # Debug logging
-            
-            # Check for specific error types
-            if is_fatal_error(last_error):
-                raise Exception("PRIVATE")
-            if is_age_restricted(last_error):
-                age_restricted_count += 1
-                # Continue trying other strategies instead of giving up immediately
+        # Build video format list — one per unique height
+        seen, videos = set(), []
+        for f in sorted(raw, key=lambda x: x.get("height") or 0, reverse=True):
+            h = f.get("height")
+            if not h or f.get("vcodec", "none") == "none":
                 continue
-            if is_region_locked(last_error):
-                raise Exception("REGION_LOCKED")
-            
-            # Retryable error — try next strategy
-            continue
-            
-        except Exception as e:
-            last_error = str(e)
-            print(f"DEBUG: General error with client '{client_str}': {last_error}")  # Debug logging
-            continue
+            if h in seen:
+                continue
+            seen.add(h)
+            hs = str(h)
+            videos.append({
+                "format_id":    f["format_id"],
+                "height":       h,
+                "label":        {"4320": "8K Ultra HD", "2160": "4K Ultra HD", "1440": "2K QHD", "1080": "Full HD", "720": "HD"}.get(hs, f"{hs}p"),
+                "resolution":   f"{hs}p",
+                "ext":          f.get("ext", "mp4"),
+                "vcodec":       (f.get("vcodec") or "mp4").split(".")[0],
+                "acodec":       f.get("acodec", "none"),
+                "filesize":     f.get("filesize") or f.get("filesize_approx"),
+                "fps":          f.get("fps"),
+                "ytdlp_format": f"bv[height={h}]+ba/bv[height<={h}]+ba/best",
+                "client":       "default",
+            })
 
-    # All strategies exhausted
-    err_lower = last_error.lower()
-    if "private" in err_lower or "removed" in err_lower:
-        raise Exception("PRIVATE")
-    
-    # Only consider it age-restricted if ALL strategies failed with age errors
-    if age_restricted_count == len(CLIENT_STRATEGIES):
-        raise Exception("AGE_RESTRICTED")
-    
-    if "country" in err_lower or "region" in err_lower or "not available" in err_lower:
-        raise Exception("REGION_LOCKED")
+        # Build audio formats
+        audios = [
+            {"label": "MP3",  "sub": "Best quality",  "ext": "mp3",  "ytdlp_format": "bestaudio/best",                     "mode": "audio", "client": "default"},
+            {"label": "Opus", "sub": "Smaller file",  "ext": "opus", "ytdlp_format": "bestaudio[ext=webm]/bestaudio/best",  "mode": "audio", "client": "default"},
+            {"label": "M4A",  "sub": "AAC audio",     "ext": "m4a",  "ytdlp_format": "bestaudio[ext=m4a]/bestaudio/best",   "mode": "audio", "client": "default"},
+            {"label": "WAV",  "sub": "Lossless",      "ext": "wav",  "ytdlp_format": "bestaudio/best",                     "mode": "audio", "client": "default"},
+        ]
 
-    raise Exception(f"Could not extract formats after trying {len(attempted)} strategies. Last error: {last_error[:200]}")
+        return {
+            "ok":          True,
+            "id":          video_id,
+            "title":       title,
+            "duration":    duration,
+            "thumbnail":   thumbnail,
+            "uploader":    uploader,
+            "video":       videos[:8],
+            "audio":       audios,
+            "client_used": "default",
+            "strategies_tried": 1,
+        }
+
+    except yt_dlp.utils.DownloadError as e:
+        err = str(e)
+        print(f"DEBUG: yt-dlp error: {err}")  # Debug logging
+        
+        if is_fatal_error(err):
+            raise Exception("PRIVATE")
+        if is_age_restricted(err):
+            raise Exception("AGE_RESTRICTED")
+        if is_region_locked(err):
+            raise Exception("REGION_LOCKED")
+        
+        raise Exception(f"Could not extract formats: {err[:200]}")
+        
+    except Exception as e:
+        err = str(e)
+        print(f"DEBUG: General error: {err}")  # Debug logging
+        raise Exception(f"Could not extract formats: {err[:200]}")
 
 
 # ─── Stream resolver ───────────────────────────────────────
