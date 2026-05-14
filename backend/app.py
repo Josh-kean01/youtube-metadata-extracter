@@ -169,12 +169,17 @@ def is_fatal_error(err: str) -> bool:
 
 
 def is_age_restricted(err: str) -> bool:
-    """Detect age-restriction errors."""
+    """Detect age-restriction errors. Be very specific to avoid false positives."""
     e = err.lower()
     return (
-        ("sign in" in e and ("age" in e or "confirm" in e)) or
+        # Must contain "age" AND "restrict" together
+        ("age" in e and "restrict" in e) or
+        # Or explicit "age-restricted" or "age restricted"
         ("age-restricted" in e) or
         ("age restricted" in e) or
+        # Or "sign in to confirm your age"
+        ("sign in" in e and "confirm" in e and "age" in e) or
+        # Or "verify your age"
         ("verify your age" in e)
     )
 
@@ -198,6 +203,7 @@ def extract_formats(video_id: str) -> dict:
     url = f"https://www.youtube.com/watch?v={video_id}"
     last_error = "Unknown"
     attempted = []
+    age_restricted_count = 0  # Count how many strategies failed with age errors
 
     for i, client_str in enumerate(CLIENT_STRATEGIES):
         attempted.append(client_str)
@@ -269,15 +275,15 @@ def extract_formats(video_id: str) -> dict:
 
         except yt_dlp.utils.DownloadError as e:
             last_error = str(e)
+            print(f"DEBUG: yt-dlp error with client '{client_str}': {last_error}")  # Debug logging
             
             # Check for specific error types
             if is_fatal_error(last_error):
                 raise Exception("PRIVATE")
             if is_age_restricted(last_error):
-                # Don't give up yet — try tv_embedded strategy which often bypasses age gates
-                if "tv_embedded" not in client_str:
-                    continue
-                raise Exception("AGE_RESTRICTED")
+                age_restricted_count += 1
+                # Continue trying other strategies instead of giving up immediately
+                continue
             if is_region_locked(last_error):
                 raise Exception("REGION_LOCKED")
             
@@ -286,14 +292,18 @@ def extract_formats(video_id: str) -> dict:
             
         except Exception as e:
             last_error = str(e)
+            print(f"DEBUG: General error with client '{client_str}': {last_error}")  # Debug logging
             continue
 
     # All strategies exhausted
     err_lower = last_error.lower()
     if "private" in err_lower or "removed" in err_lower:
         raise Exception("PRIVATE")
-    if "age" in err_lower and ("restrict" in err_lower or "sign in" in err_lower or "verify" in err_lower):
+    
+    # Only consider it age-restricted if ALL strategies failed with age errors
+    if age_restricted_count == len(CLIENT_STRATEGIES):
         raise Exception("AGE_RESTRICTED")
+    
     if "country" in err_lower or "region" in err_lower or "not available" in err_lower:
         raise Exception("REGION_LOCKED")
 
