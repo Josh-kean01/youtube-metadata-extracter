@@ -1,0 +1,16 @@
+# Core downloader - latest stable with 2026 YouTube fixes
+yt-dlp[default,curl-cffi]>=2026.2.21
+
+# PO Token provider - CRITICAL for 2026 YouTube downloads
+bgutil-ytdlp-pot-provider>=1.0.0
+
+# Web framework
+flask>=3.1.0
+flask-cors>=5.0.0
+
+# Production server
+gunicorn>=23.0.0
+
+# Optional: for cookie handling (age-restricted videos)
+# Uncomment if you want to support user-uploaded cookies
+# browser-cookie3>=0.19.1
